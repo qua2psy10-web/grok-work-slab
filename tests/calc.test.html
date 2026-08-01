@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>RC床版 計算コア検証</title>
+    <style>
+      body { font-family: sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+      .pass { color: #1b7f4a; }
+      .fail { color: #b42318; }
+      li { margin: 0.35rem 0; }
+    </style>
+  </head>
+  <body>
+    <h1>計算コア検証</h1>
+    <ul id="out"></ul>
+    <script src="../js/format.js"></script>
+    <script src="../js/calc/materials.js"></script>
+    <script src="../js/calc/loads.js"></script>
+    <script src="../js/calc/section.js"></script>
+    <script src="../js/calc/bending.js"></script>
+    <script src="../js/calc/shear.js"></script>
+    <script src="../js/calc/rebar.js"></script>
+    <script src="../js/calc/detailChecks.js"></script>
+    <script src="../js/calc/design.js"></script>
+    <script src="../js/presets.js"></script>
+    <script>
+      const out = document.getElementById("out");
+      let failed = 0;
+      function assert(name, cond, detail) {
+        const li = document.createElement("li");
+        li.className = cond ? "pass" : "fail";
+        li.textContent = (cond ? "PASS" : "FAIL") + " — " + name + (detail ? " | " + detail : "");
+        out.appendChild(li);
+        if (!cond) failed++;
+      }
+      function approx(a, b, tol) {
+        return Math.abs(a - b) <= (tol ?? 1e-6);
+      }
+
+      // Case 1: M = w L^2 / 8
+      // w = 10 kN/m, L = 3000 mm → M = 10 * 3000^2 / 8 = 11.25e6 N·mm = 11.25 kN·m
+      {
+        const M = RCSlab.bending.simpleBeamMoment(10, 3000);
+        assert("単純梁 M", approx(M, 11.25e6, 1), "M=" + M);
+        const V = RCSlab.shear.simpleBeamShear(10, 3000);
+        assert("単純梁 V", approx(V, 15000, 1), "V=" + V);
+      }
+
+      // Case 2: d
+      {
+        const d = RCSlab.section.effectiveDepth(200, 30, 16);
+        assert("有効高さ d", approx(d, 162, 1e-9), "d=" + d);
+      }
+
+      // Case 3: provided As D16@125 on b=1000 → 8 bars → 8*198.6
+      {
+        const As = RCSlab.rebar.providedAs(198.6, 125, 1000);
+        assert("配筋 As D16@125", approx(As, 1588.8, 0.1), "As=" + As);
+      }
+
+      // Case 4: full design default-like
+      {
+        const r = RCSlab.design.run({
+          L_m: 3.0,
+          t_mm: 200,
+          b_mm: 1000,
+          cover_mm: 30,
+          coverTop_mm: 30,
+          sectionType: "single",
+          sigmaCk: 24,
+          sigmaCa: 8,
+          tauA: 0.39,
+          Ec: 25000,
+          gamma_c: 24.5,
+          steelGrade: "SD345",
+          sigmaSa: 180,
+          Es: 200000,
+          useFixedN: true,
+          nFixed: 15,
+          pavement_mm: 80,
+          gamma_p: 22.5,
+          addl_dead_kNpm2: 0,
+          live_kNpm2: 10,
+          impact: 0.25,
+          rebarMode: "auto",
+          barName: "D16",
+          spacing_mm: 125,
+          rebarModeComp: "auto",
+          barNameComp: "D13",
+          spacingComp_mm: 150,
+          maxSpacing: 300,
+          minSpacing: 100,
+          pMin: 0.002,
+          tMinAbs_mm: 160,
+          spanDivisor: 30,
+          maxSpacingByT: 1.5,
+          distRatio: 0.3,
+          pDistMin: 0.001,
+          lapFactor: 1.0,
+          tauOa: "",
+          distMode: "auto",
+          distBarName: "D13",
+          distSpacing_mm: 200,
+        });
+        assert("design.run 成功", r.ok === true, (r.errors || []).join(";"));
+        if (r.ok) {
+          assert("M > 0", r.forces.M_kNm > 0, "M=" + r.forces.M_kNm);
+          assert("As_req > 0", r.required.As_req > 0, "As_req=" + r.required.As_req);
+          assert("配筋あり", !!r.rebar.used, "");
+          assert("総合判定が boolean", typeof r.overallOk === "boolean", "");
+          // 手計算: 自重 24.5*0.2=4.9, 舗装22.5*0.08=1.8, 死=6.7
+          // 活 10*1.25=12.5, 面合計 19.2 kN/m2, b=1m → w=19.2 kN/m
+          assert("w 近似 19.2", approx(r.load.w_kNpm, 19.2, 0.05), "w=" + r.load.w_kNpm);
+          // M = 19.2 * 3^2 / 8 = 21.6 kN·m
+          assert("M 近似 21.6", approx(r.forces.M_kNm, 21.6, 0.05), "M=" + r.forces.M_kNm);
+          assert("詳細照査あり", !!r.details);
+          assert("最小版厚 OK", r.details.thickness.ok);
+          assert("配力あり", !!r.details.distribution.used);
+        }
+      }
+
+      // Case 7: 定着長
+      {
+        const dev = RCSlab.detailChecks.developmentLength({
+          barDiameter_mm: 16,
+          sigmaSa: 180,
+          sigmaCk: 24,
+          tauOa: 1.6,
+          lapFactor: 1.0,
+        });
+        assert("ld ≈ 450", approx(dev.ld_mm, 450, 0.5), "ld=" + dev.ld_mm);
+      }
+
+      // Case 8: プリセット
+      {
+        assert("プリセット数", RCSlab.presets.listBuiltin().length >= 3);
+      }
+
+      // Case 5: 複鉄筋 k と必要量
+      {
+        const bal = RCSlab.section.balancedSection(15, 8, 180, 1000, 160);
+        assert("k_bal = 0.4", approx(bal.k, 0.4, 1e-9), "k=" + bal.k);
+        const M = bal.M1_Nmm * 1.3;
+        const req = RCSlab.bending.requiredAsDouble(M, 8, 180, 1000, 160, 35, 15);
+        assert("複鉄筋 mode", req.mode === "double");
+        assert("As' > 0", req.AsPrime_req > 0);
+        const st = RCSlab.bending.stressesDouble(M, req.As_req, req.AsPrime_req, 1000, 160, 35, 15);
+        assert("複鉄筋 σc 有限", Number.isFinite(st.sigmaC) && st.sigmaC > 0);
+      }
+
+      // Case 6: As'=0 で単鉄筋と一致
+      {
+        const s1 = RCSlab.bending.stresses(20e6, 1000, 1000, 160, 15);
+        const s2 = RCSlab.bending.stressesDouble(20e6, 1000, 0, 1000, 160, 35, 15);
+        assert("As'=0 で σc 一致", approx(s1.sigmaC, s2.sigmaC, 1e-6));
+      }
+
+      const end = document.createElement("p");
+      end.innerHTML = failed
+        ? '<strong class="fail">失敗: ' + failed + " 件</strong>"
+        : '<strong class="pass">すべて成功</strong>';
+      document.body.appendChild(end);
+    </script>
+  </body>
+</html>

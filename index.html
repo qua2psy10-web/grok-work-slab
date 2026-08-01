@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>単純支持 RC 床版 設計補助ツール</title>
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <header class="site-header no-print">
+      <h1>単純支持 RC 床版 設計補助ツール</h1>
+      <p class="lead">
+        主桁間一方向床版を単位幅の単純梁として、許容応力度設計（参考）で曲げ・せん断・配筋を検討し、設計計算書を出力します。
+      </p>
+    </header>
+
+    <div class="disclaimer-banner no-print">
+      本ツールは道路橋示方書の全文準拠・認証ソフトではありません。係数は参考値であり、実務では最新基準と照らし合わせて利用してください。
+    </div>
+
+    <div class="layout no-print">
+      <!-- 入力 -->
+      <div class="panel" id="inputPanel">
+        <h2>入力</h2>
+
+        <h3>プリセット・条件の保存</h3>
+        <div class="field-grid">
+          <label class="full">組み込みプリセット
+            <select id="presetBuiltin"></select>
+          </label>
+          <label class="full">保存済み条件
+            <select id="presetSaved">
+              <option value="">（なし）</option>
+            </select>
+          </label>
+          <label class="full">保存名
+            <input type="text" id="saveCaseName" placeholder="例）A1-P1 床版 検討1" />
+          </label>
+        </div>
+        <div class="actions actions-inline">
+          <button type="button" class="secondary" id="btnApplyPreset">プリセット適用</button>
+          <button type="button" class="secondary" id="btnLoadSaved">読込</button>
+          <button type="button" class="secondary" id="btnSaveCase">条件を保存</button>
+          <button type="button" class="secondary" id="btnDeleteSaved">削除</button>
+          <button type="button" class="secondary" id="btnExportJson">JSON 出力</button>
+          <button type="button" class="secondary" id="btnImportJson">JSON 読込</button>
+          <input type="file" id="importFile" accept="application/json,.json" hidden />
+        </div>
+        <p class="field-hint">保存はブラウザの localStorage に残ります。JSON でファイル共有もできます。</p>
+
+        <h3>案件情報（計算書）</h3>
+        <div class="field-grid">
+          <label class="full">案件名 / 計算書タイトル
+            <input type="text" id="projectName" />
+          </label>
+          <label>橋梁名
+            <input type="text" id="bridgeName" placeholder="例）○○橋" />
+          </label>
+          <label>径間・位置
+            <input type="text" id="spanLabel" placeholder="例）A1–P1 床版" />
+          </label>
+          <label>作成者
+            <input type="text" id="author" />
+          </label>
+          <label>作成日
+            <input type="date" id="date" />
+          </label>
+          <label class="full">備考
+            <textarea id="notes" placeholder="特記事項があれば記入"></textarea>
+          </label>
+        </div>
+
+        <h3>構造・断面</h3>
+        <div class="field-grid">
+          <label>支間長 L [m]
+            <input type="number" id="L_m" min="0" step="0.1" />
+          </label>
+          <label>床版厚 t [mm]
+            <input type="number" id="t_mm" min="0" step="5" />
+          </label>
+          <label>設計幅 b [mm]
+            <input type="number" id="b_mm" min="0" step="10" />
+          </label>
+          <label>かぶり c（引張側）[mm]
+            <input type="number" id="cover_mm" min="0" step="1" />
+          </label>
+          <label>断面形式
+            <select id="sectionType">
+              <option value="single">単鉄筋</option>
+              <option value="auto">複鉄筋（必要時自動）</option>
+              <option value="double">複鉄筋（常時）</option>
+            </select>
+          </label>
+          <label id="coverTopLabel">上側かぶり c' [mm]
+            <input type="number" id="coverTop_mm" min="0" step="1" />
+          </label>
+        </div>
+        <p id="sectionTypeHint" style="font-size: 0.78rem; color: var(--muted); margin: 0.4rem 0 0">
+          複鉄筋は作用 M がつり合い抵抗モーメント M1 を超える場合に、引張＋圧縮鉄筋で設計します。
+        </p>
+
+        <h3>材料</h3>
+        <div class="field-grid">
+          <label>コンクリート σck
+            <select id="sigmaCk"></select>
+          </label>
+          <label>鉄筋種別
+            <select id="steelGrade"></select>
+          </label>
+          <label>σca [N/mm²]
+            <input type="number" id="sigmaCa" min="0" step="0.1" />
+          </label>
+          <label>σsa [N/mm²]
+            <input type="number" id="sigmaSa" min="0" step="1" />
+          </label>
+          <label>τa [N/mm²]
+            <input type="number" id="tauA" min="0" step="0.01" />
+          </label>
+          <label>Ec [N/mm²]
+            <input type="number" id="Ec" min="0" step="100" />
+          </label>
+          <label>γc [kN/m³]
+            <input type="number" id="gamma_c" min="0" step="0.1" />
+          </label>
+          <label>n（固定時）
+            <input type="number" id="nFixed" min="1" step="0.1" />
+          </label>
+          <label class="full checkbox-row">
+            <input type="checkbox" id="useFixedN" />
+            ヤング係数比 n を固定する（慣用 n=15）
+          </label>
+        </div>
+
+        <h3>荷重</h3>
+        <div class="field-grid">
+          <label>舗装厚 [mm]
+            <input type="number" id="pavement_mm" min="0" step="5" />
+          </label>
+          <label>γ舗装 [kN/m³]
+            <input type="number" id="gamma_p" min="0" step="0.1" />
+          </label>
+          <label>付加死荷重 [kN/m²]
+            <input type="number" id="addl_dead_kNpm2" min="0" step="0.1" />
+          </label>
+          <label>活荷重 p [kN/m²]
+            <input type="number" id="live_kNpm2" min="0" step="0.1" />
+          </label>
+          <label>衝撃係数 i
+            <input type="number" id="impact" min="0" step="0.01" />
+          </label>
+        </div>
+        <p style="font-size: 0.78rem; color: var(--muted); margin: 0.4rem 0 0">
+          活荷重は等分布等価荷重として扱います（T荷重の影響線載荷は対象外）。
+        </p>
+
+        <h3>配筋（引張鉄筋）</h3>
+        <div class="field-grid">
+          <label>配筋の決め方
+            <select id="rebarMode">
+              <option value="auto">自動提案</option>
+              <option value="manual">手動指定</option>
+            </select>
+          </label>
+          <label>最大間隔 [mm]
+            <input type="number" id="maxSpacing" min="50" step="25" />
+          </label>
+          <label>最小間隔 [mm]
+            <input type="number" id="minSpacing" min="50" step="5" />
+          </label>
+          <label>最小鉄筋比 pmin
+            <input type="number" id="pMin" min="0" step="0.0001" />
+          </label>
+        </div>
+        <div id="manualRebarFields" class="field-grid" style="margin-top: 0.5rem">
+          <label>引張鉄筋径
+            <select id="barName"></select>
+          </label>
+          <label>間隔 [mm]
+            <input type="number" id="spacing_mm" min="50" step="5" />
+          </label>
+        </div>
+
+        <div id="compRebarSection">
+          <h3>配筋（圧縮鉄筋）</h3>
+          <div class="field-grid">
+            <label>配筋の決め方
+              <select id="rebarModeComp">
+                <option value="auto">自動提案</option>
+                <option value="manual">手動指定</option>
+              </select>
+            </label>
+          </div>
+          <div id="manualCompRebarFields" class="field-grid" style="margin-top: 0.5rem">
+            <label>圧縮鉄筋径
+              <select id="barNameComp"></select>
+            </label>
+            <label>間隔 [mm]
+              <input type="number" id="spacingComp_mm" min="50" step="5" />
+            </label>
+          </div>
+        </div>
+
+        <h3>配力鉄筋・詳細照査（参考）</h3>
+        <div class="field-grid">
+          <label>最小版厚 tmin [mm]
+            <input type="number" id="tMinAbs_mm" min="0" step="5" />
+          </label>
+          <label>支間比 L/t 上限
+            <input type="number" id="spanDivisor" min="1" step="1" title="t ≥ L/この値" />
+          </label>
+          <label>間隔上限係数（×t）
+            <input type="number" id="maxSpacingByT" min="0" step="0.1" />
+          </label>
+          <label>配力 As 比（対主筋）
+            <input type="number" id="distRatio" min="0" step="0.05" />
+          </label>
+          <label>配力最小鉄筋比
+            <input type="number" id="pDistMin" min="0" step="0.0001" />
+          </label>
+          <label>重ね継手係数
+            <input type="number" id="lapFactor" min="0" step="0.1" />
+          </label>
+          <label>付着応力度 τoa [N/mm²]
+            <input type="number" id="tauOa" min="0" step="0.1" placeholder="空欄=自動" />
+          </label>
+          <label>配力鉄筋の決め方
+            <select id="distMode">
+              <option value="auto">自動提案</option>
+              <option value="manual">手動指定</option>
+            </select>
+          </label>
+        </div>
+        <div id="manualDistFields" class="field-grid" style="margin-top: 0.5rem">
+          <label>配力鉄筋径
+            <select id="distBarName"></select>
+          </label>
+          <label>配力間隔 [mm]
+            <input type="number" id="distSpacing_mm" min="50" step="5" />
+          </label>
+        </div>
+        <p class="field-hint">
+          最小厚: t ≥ max(tmin, L/支間比)。定着: ld = max(σsa/(4τoa)·φ, 20φ)（簡易・参考）。
+        </p>
+
+        <div class="actions">
+          <button type="button" id="btnCalc">再計算</button>
+          <button type="button" class="secondary" id="btnScrollReport">計算書を表示</button>
+          <button type="button" class="secondary" id="btnPrint">印刷 / PDF</button>
+        </div>
+      </div>
+
+      <!-- 結果 -->
+      <div class="panel" id="resultsPanel">
+        <h2>計算結果</h2>
+        <div id="errorBox" hidden></div>
+        <div id="warnBox" hidden></div>
+        <div id="resultSummary"></div>
+        <table id="resultTable" class="data-table"></table>
+
+        <h3>配筋候補（引張・単位幅）</h3>
+        <div class="candidates-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>径</th>
+                <th>間隔 [mm]</th>
+                <th>As [mm²]</th>
+                <th>判定</th>
+                <th>備考</th>
+              </tr>
+            </thead>
+            <tbody id="candidatesBody"></tbody>
+          </table>
+        </div>
+
+        <div id="compCandidatesBlock" hidden>
+          <h3>配筋候補（圧縮・単位幅）</h3>
+          <div class="candidates-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>径</th>
+                  <th>間隔 [mm]</th>
+                  <th>As' [mm²]</th>
+                  <th>判定</th>
+                  <th>備考</th>
+                </tr>
+              </thead>
+              <tbody id="candidatesCompBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <h3>詳細照査（参考）</h3>
+        <table id="detailTable" class="data-table"></table>
+
+        <h3>配力鉄筋候補（単位幅）</h3>
+        <div class="candidates-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>径</th>
+                <th>間隔 [mm]</th>
+                <th>As,dist [mm²]</th>
+                <th>判定</th>
+                <th>備考</th>
+              </tr>
+            </thead>
+            <tbody id="candidatesDistBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <section id="reportSection">
+      <h2 class="screen-only no-print">設計計算書プレビュー</h2>
+      <div class="report-toolbar no-print">
+        <button type="button" class="secondary" id="btnPrintReport">印刷 / PDF に保存</button>
+      </div>
+      <div id="reportArea"></div>
+    </section>
+
+    <!-- 計算ロジック（順序依存・ES modules 不使用で file:// 対応） -->
+    <script src="js/format.js"></script>
+    <script src="js/calc/materials.js"></script>
+    <script src="js/calc/loads.js"></script>
+    <script src="js/calc/section.js"></script>
+    <script src="js/calc/bending.js"></script>
+    <script src="js/calc/shear.js"></script>
+    <script src="js/calc/rebar.js"></script>
+    <script src="js/calc/detailChecks.js"></script>
+    <script src="js/calc/design.js"></script>
+    <script src="js/presets.js"></script>
+    <script src="js/report.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>
